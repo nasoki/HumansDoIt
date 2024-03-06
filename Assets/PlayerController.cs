@@ -1,108 +1,100 @@
 using System.Collections;
 using System.Collections.Generic;
+using Photon.Realtime;
 using UnityEngine;
 using Photon.Pun;
-using Photon.Realtime;
-using DG.Tweening;
-using UnityEngine.UI;
-
-public class PlayerController : MonoBehaviour
+public class PlayerController : MonoBehaviourPunCallbacks, IPunObservable
 {
-    [HideInInspector] public int id;
-    public float moveSpeed;
-    public CharacterController characterController;
+    [HideInInspector]
+    public int id;
+    public float moveSpeed, jumpForce;
+    public GameObject hatObject;
+    [HideInInspector]
+    public float curHatTime;
+    public Rigidbody rig;
     public Player photonPlayer;
-    public Transform camTransform;
-    public bool isRunning = false;
-    public Animator animatorController;
-    public Rigidbody rb;
-
-
-    // Start is called before the first frame update
-    void Start()
+    private void Update()
     {
-        Cursor.lockState = CursorLockMode.Locked;
-        characterController = GetComponent<CharacterController>();
-
-    }
-
-    // Update is called once per frame
-    void Update()
-    {
-        Look();
-        Move();
-    }
-    void Look()
-    {
-        float mouseInputX = Input.GetAxis("Mouse X");
-        float mouseInputY = Input.GetAxis("Mouse Y");
-
-        float newRotationX = camTransform.localEulerAngles.x - mouseInputY;
-
-        if (newRotationX > 180f)
+        if (PhotonNetwork.IsMasterClient)
         {
-            newRotationX -= 360f;
+            if(curHatTime >= GameManager.instance.timeToWin && !GameManager.instance.gameEnded)
+            {
+                GameManager.instance.gameEnded = true;
+                GameManager.instance.photonView.RPC("WinGame", RpcTarget.All, id);
+            }
         }
-        newRotationX = Mathf.Clamp(newRotationX, -80f, 80f);
-
-        transform.eulerAngles += Vector3.up * mouseInputX;
-        camTransform.localEulerAngles = new Vector3(newRotationX, 0f, 0f);
+        if (photonView.IsMine)
+        {
+            Move();
+            if(Input.GetKeyDown(KeyCode.Space))
+            {
+                TryJump();
+            }
+            if(hatObject.activeInHierarchy)
+            {
+                curHatTime += Time.deltaTime;
+            }
+        }
     }
-
     void Move()
     {
-        if (Input.GetKey(KeyCode.A))
+        float x = Input.GetAxis("Horizontal") * moveSpeed;
+        float z = Input.GetAxis("Vertical") * moveSpeed;
+        rig.velocity = new Vector3 (x, rig.velocity.y, z);
+    }
+    void TryJump()
+    {
+        Ray ray = new Ray(transform.position, Vector3.down);
+        if(Physics.Raycast(ray, 0.7f))
         {
-            animatorController.SetBool("isWalking", false);
-            animatorController.SetBool("isIdle", false);
-            animatorController.SetBool("isLeftStrafeWalking", true);
-
+            rig.AddForce(Vector3.up * jumpForce, ForceMode.Impulse);
         }
-        else if (Input.GetKey(KeyCode.D))
+    }
+    [PunRPC]
+    public void Initialize(Player player)
+    {
+        photonPlayer = player;
+        id = player.ActorNumber;
+        if(id == 1)
         {
-            animatorController.SetBool("isWalking", false);
-            animatorController.SetBool("isIdle", false);
-            animatorController.SetBool("isRightStrafeWalking", true);
+            GameManager.instance.GiveHat(id, true);
         }
-        else if (Input.GetKey(KeyCode.W))
+        GameManager.instance.players[id-1] = this;
+        if(!photonView.IsMine)
         {
-            animatorController.SetBool("isWalking", true);
-            animatorController.SetBool("isIdle", false);
-            animatorController.SetBool("isLeftStrafeWalking", false);
-            animatorController.SetBool("isRightStrafeWalking", false);
+            rig.isKinematic = true;
         }
-        else if (Input.GetKey(KeyCode.S))
+    }
+    public void SetHat(bool hasHat)
+    {
+        hatObject.SetActive(hasHat);
+    }
+    private void OnCollisionEnter(Collision collision)
+    {
+        if(!photonView.IsMine)
         {
-            animatorController.SetBool("isWalkingBackwards", true);
-            animatorController.SetBool("isIdle", false);
+            return;
         }
-        else
+        if (collision.gameObject.CompareTag("Player"))
         {
-            animatorController.SetBool("isWalking", false);
-            animatorController.SetBool("isIdle", true);
-            animatorController.SetBool("isLeftStrafeWalking", false);
-            animatorController.SetBool("isRightStrafeWalking", false);
-            animatorController.SetBool("isWalkingBackwards", false);
-            animatorController.SetBool("isRunning", false);
-
+            if(GameManager.instance.GetPlayer(collision.gameObject).id == GameManager.instance.playerWithHat)
+            {
+                if (GameManager.instance.CanGetHat())
+                {
+                    GameManager.instance.photonView.RPC("GiveHat", RpcTarget.All, id, false);
+                }
+            }
         }
-        float x = Input.GetAxisRaw("Horizontal");
-        float z = Input.GetAxisRaw("Vertical");
-
-        Vector3 dir = transform.right * x + transform.forward * z;
-        dir.Normalize();
-        if (Input.GetKey(KeyCode.LeftShift) && Input.GetKey(KeyCode.W))
+    }
+    public void OnPhotonSerializeView(PhotonStream stream, PhotonMessageInfo info)
+    {
+        if(stream.IsWriting)
         {
-            isRunning = true;
-            moveSpeed = 3f;
+            stream.SendNext(curHatTime);
         }
-        else
+        else if(stream.IsReading) 
         {
-            isRunning = false;
-            moveSpeed = 2f;
+            curHatTime = (float)stream.ReceiveNext();
         }
-        dir *= moveSpeed * Time.deltaTime;
-
-        characterController.Move(dir);
     }
 }
